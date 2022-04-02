@@ -92,6 +92,7 @@
 			indentWidth = 2;
 			sourceTree = "<group>";
 			tabWidth = 2;
+			usesTabs = 1;
 		};
 		9C972CD026C116F600E48FAC /* Products */ = {
 			isa = PBXGroup;
