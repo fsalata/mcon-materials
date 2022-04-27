@@ -50,6 +50,7 @@ struct AppMain: App {
       .transition(.opacity)
       .animation(.linear, value: isVerified)
       .environmentObject(model)
+      .environmentObject(ImageLoader())
     }
   }
 }

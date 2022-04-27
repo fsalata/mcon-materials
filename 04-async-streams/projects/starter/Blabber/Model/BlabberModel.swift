@@ -53,6 +53,42 @@ class BlabberModel: ObservableObject {
   /// Does a countdown and sends the message.
   func countdown(to message: String) async throws {
     guard !message.isEmpty else { return }
+    
+//    let counter = AsyncStream<String> { continuation in
+//      var countdown = 3
+//
+//      Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { timer in
+//        guard countdown > 0 else {
+//          timer.invalidate()
+//          continuation.yield(with: .success("🎉 " + message))
+//          return
+//        }
+//
+//        continuation.yield("\(countdown) ...")
+//        countdown -= 1
+//      }
+//    }
+    
+    var countdown = 3
+    let counter = AsyncStream<String> {
+      do {
+        try await Task.sleep(nanoseconds: 1_000_000_000)
+      } catch {
+        return nil
+      }
+      
+      defer { countdown -= 1 }
+      
+      switch countdown {
+      case (1...): return "\(countdown)..."
+      case 0: return "🎉 " + message
+      default: return nil
+      }
+    }
+    
+    try await counter.forEach { [weak self] in
+      try await self?.say($0)
+    }
   }
 
   /// Start live chat updates
@@ -83,6 +119,33 @@ class BlabberModel: ObservableObject {
   /// Reads the server chat stream and updates the data model.
   @MainActor
   private func readMessages(stream: URLSession.AsyncBytes) async throws {
+    var iterator = stream.lines.makeAsyncIterator()
+    
+    guard let first = try await iterator.next() else {
+      throw "No response from server"
+    }
+    
+    guard let data = first.data(using: .utf8),
+          let status = try? JSONDecoder().decode(ServerStatus.self, from: data) else {
+      throw "Invalid response from server"
+    }
+    
+    messages.append(Message(message: "\(status.activeUsers) active users"))
+    
+    let notifications = Task {
+      await observeAppStatus()
+    }
+    
+    defer {
+      notifications.cancel()
+    }
+    
+    for try await line in stream.lines {
+      if let data = line.data(using: .utf8),
+         let update = try? JSONDecoder().decode(Message.self, from: data) {
+        messages.append(update)
+      }
+    }
   }
 
   /// Sends the user's message to the chat server
@@ -103,6 +166,21 @@ class BlabberModel: ObservableObject {
       throw "The server responded with an error."
     }
   }
+  
+  /// Observe app Status
+  func observeAppStatus() async {
+    Task {
+      for await _ in await NotificationCenter.default.notification(for: UIApplication.willResignActiveNotification) {
+        try? await say("\(username) went away", isSystemMessage: true)
+      }
+    }
+    
+    Task {
+      for await _ in await NotificationCenter.default.notification(for: UIApplication.didBecomeActiveNotification) {
+        try? await say("\(username) came back", isSystemMessage: true)
+      }
+    }
+  }
 
   /// A URL session that goes on indefinitely, receiving live updates.
   private var liveURLSession: URLSession = {
@@ -110,4 +188,12 @@ class BlabberModel: ObservableObject {
     configuration.timeoutIntervalForRequest = .infinity
     return URLSession(configuration: configuration)
   }()
+}
+
+extension AsyncSequence {
+  func forEach(_ body: (Element) async throws -> Void) async throws {
+    for try await element in self {
+      try await body(element)
+    }
+  }
 }
